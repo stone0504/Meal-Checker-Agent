@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Prefer env vars (set by ~/.config/claude-tools/env via your shell rc).
+# Fall back to the legacy config file for older installs.
+if [[ -z "${TG_BOT_TOKEN:-}" || -z "${TG_CHAT_ID:-}" ]]; then
+  LEGACY_CONFIG="${TG_NOTIFY_CONFIG:-$HOME/.config/telegram-notify/config}"
+  SHARED_ENV="$HOME/.config/claude-tools/env"
+  if [[ -f "$SHARED_ENV" ]]; then
+    # shellcheck disable=SC1090
+    source "$SHARED_ENV"
+  elif [[ -f "$LEGACY_CONFIG" ]]; then
+    # shellcheck disable=SC1090
+    source "$LEGACY_CONFIG"
+  fi
+fi
+
+if [[ -z "${TG_BOT_TOKEN:-}" || -z "${TG_CHAT_ID:-}" ]]; then
+  echo "tg-notify: TG_BOT_TOKEN or TG_CHAT_ID not set." >&2
+  echo "  Run install.sh again, or export them in your shell rc." >&2
+  exit 1
+fi
+
+if [[ $# -gt 0 ]]; then
+  MSG="$*"
+else
+  MSG="$(cat)"
+fi
+
+if [[ -z "$MSG" ]]; then
+  echo "tg-notify: empty message" >&2
+  exit 1
+fi
+
+RESPONSE=$(curl -sS -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+  --data-urlencode "chat_id=${TG_CHAT_ID}" \
+  --data-urlencode "text=${MSG}")
+
+if ! printf '%s' "$RESPONSE" | grep -q '"ok":true'; then
+  echo "tg-notify: send failed: $RESPONSE" >&2
+  exit 1
+fi

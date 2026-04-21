@@ -1,0 +1,10 @@
+{
+  "name": "meal-checker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read-only scraper for  employee meal ordering platform",
+  "main": "check.js",
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}
