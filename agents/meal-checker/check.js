@@ -15,47 +15,70 @@ if (!EMAIL) {
 }
 
 function todayISO() {
-  // Local date in YYYY-MM-DD
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  // Taipei (GMT+8) date in YYYY-MM-DD — the meal platform operates in Taiwan time,
+  // so we pin to Asia/Taipei regardless of the host's system timezone.
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 async function extractOrders(page, source) {
-  await page.waitForSelector('strong:has-text("Lunch")', { timeout: 10000 });
+  // Wait until the active tab panel's Lunch section has fully rendered its cards.
+  // The Lunch divider is followed by an <span class="ant-tag"> with the order count —
+  // we treat the panel as ready when the number of visible cards following that divider
+  // matches the advertised count (or the count is 0).
+  await page.waitForFunction(
+    () => {
+      const lunchStrongs = Array.from(document.querySelectorAll('strong')).filter(
+        (el) => el.textContent.trim() === 'Lunch',
+      );
+      const visibleLunch = lunchStrongs.find((el) => {
+        const divider = el.closest('.ant-divider');
+        return divider && divider.offsetParent !== null;
+      });
+      if (!visibleLunch) return false;
+      const divider = visibleLunch.closest('.ant-divider');
+      const countTag = divider.querySelector('.ant-tag');
+      const expected = countTag ? parseInt(countTag.textContent.trim(), 10) : 0;
+      if (!Number.isFinite(expected) || expected === 0) return true;
+      let fullyRendered = 0;
+      for (let sib = divider.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        if (sib.matches('.ant-divider')) break;
+        if (!sib.matches('.ant-card') || sib.offsetParent === null) continue;
+        // Each card must have its meal-detail block hydrated — the "•" bullet only
+        // appears once the inner shop/meal row has rendered.
+        if (/•/.test(sib.innerText || '')) fullyRendered++;
+      }
+      return fullyRendered >= expected;
+    },
+    { timeout: 10000 },
+  );
 
   return page.evaluate((sourceLabel) => {
     const results = [];
-    const strongs = Array.from(document.querySelectorAll('strong'));
-    const lunchStrong = strongs.find((el) => el.textContent.trim() === 'Lunch');
-    const dinnerStrong = strongs.find((el) => el.textContent.trim() === 'Dinner');
-    if (!lunchStrong) return results;
-
-    const dateStrongs = strongs.filter((el) =>
+    const dateStrongs = Array.from(document.querySelectorAll('strong')).filter((el) =>
       /^20\d{2}-\d{2}-\d{2}\s*\([A-Za-z]{3}\)$/.test(el.textContent.trim()),
     );
 
     for (const dStrong of dateStrongs) {
-      // Must fall between the Lunch and Dinner separators in document order
-      const posLunch = lunchStrong.compareDocumentPosition(dStrong);
-      if (!(posLunch & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-      if (dinnerStrong) {
-        const posDinner = dinnerStrong.compareDocumentPosition(dStrong);
-        if (posDinner & Node.DOCUMENT_POSITION_FOLLOWING) continue;
-      }
+      const card = dStrong.closest('.ant-card');
+      if (!card || card.offsetParent === null) continue;
 
-      // Climb to the enclosing card (contains status + a "•" meal line)
-      let card = dStrong.parentElement;
-      while (card && card !== document.body) {
-        const txt = card.innerText || '';
-        if (/(Confirmed|Cancelled|Pending)/.test(txt) && /•/.test(txt)) break;
-        card = card.parentElement;
+      // The card's section (Lunch/Dinner) is the nearest preceding sibling divider
+      // at the same depth containing a <strong>Lunch</strong> or <strong>Dinner</strong>.
+      let section = null;
+      for (let sib = card.previousElementSibling; sib; sib = sib.previousElementSibling) {
+        const t = sib.querySelector?.('strong')?.textContent?.trim();
+        if (t === 'Lunch' || t === 'Dinner') { section = t; break; }
       }
-      if (!card) continue;
+      if (section !== 'Lunch') continue;
 
-      const text = card.innerText;
+      const text = card.innerText || '';
       const dateMatch = dStrong.textContent
         .trim()
         .match(/^(20\d{2}-\d{2}-\d{2})\s*\(([A-Za-z]{3})\)$/);
