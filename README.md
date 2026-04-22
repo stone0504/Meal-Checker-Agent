@@ -1,5 +1,7 @@
 # Claude Agents Bundle
 
+> ⚠️ **Warning**: Date/time logic (e.g. "today's order") relies on the local system timezone. Make sure your system is set to **Asia/Taipei (GMT+8)**, otherwise the tool may query the wrong date.
+
 Two personal Claude Code sub-agents:
 
 - **meal-checker** — logs into the Amazon employee lunch ordering platform (read-only) and reports today's order plus upcoming confirmed orders.
