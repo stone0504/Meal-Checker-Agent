@@ -1,247 +1,137 @@
 #!/usr/bin/env bash
-# Combined installer for tg-notify + meal-checker.
+# install.sh — install meal-checker and tg-notify agents into ~/.claude/agents.
 #
 # Usage:
-#   ./install.sh              # install both (default)
-#   ./install.sh tg-notify    # only tg-notify
-#   ./install.sh meal-checker # only meal-checker
-#   ./install.sh both         # same as no args
+#   ./install.sh              # interactive
+#   ./install.sh --no-prompt  # skip prompts, only copy files (you edit env by hand)
 #
-# Non-interactive (all three can be pre-set):
-#   TG_BOT_TOKEN=xxx TG_CHAT_ID=yyy MEAL_CHECKER_EMAIL=you@mail.com ./install.sh
+# Safe to re-run: existing files are backed up to *.bak before overwrite.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET="${1:-both}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENTS_SRC="$HERE/agents"
+AGENTS_DST="$HOME/.claude/agents"
+ENV_DIR="$HOME/.config/claude-tools"
+ENV_FILE="$ENV_DIR/env"
 
-case "$TARGET" in
-  tg-notify|meal-checker|both) ;;
-  *)
-    echo "Usage: $0 [tg-notify|meal-checker|both]" >&2
-    exit 2
-    ;;
-esac
-
-# Env variables are written directly into the user's shell rc so that
-# TG_BOT_TOKEN / TG_CHAT_ID / MEAL_CHECKER_EMAIL become permanent exports
-# on macOS (zsh) and Linux (bash) alike. We maintain a marker-bracketed
-# block inside the rc and upsert individual KEY=VALUE lines in place.
-MARKER_BEGIN="# >>> claude-tools env >>>"
-MARKER_END="# <<< claude-tools env <<<"
-
-hr() { printf '\n%s\n' "------------------------------------------------------------"; }
-
-# Pick which shell rc to patch. Honour $SHELL; fall back to whichever rc
-# file already exists; otherwise default to ~/.zshrc on macOS, ~/.bashrc
-# on Linux.
-pick_shell_rc() {
-  local shell_name
-  shell_name="$(basename "${SHELL:-}")"
-  case "$shell_name" in
-    zsh)  echo "$HOME/.zshrc"  ; return ;;
-    bash)
-      if [[ "$(uname -s)" == "Darwin" ]]; then
-        # macOS bash only reads ~/.bash_profile for login shells.
-        echo "$HOME/.bash_profile"
-      else
-        echo "$HOME/.bashrc"
-      fi
-      return ;;
+NO_PROMPT=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-prompt) NO_PROMPT=1 ;;
+    -h|--help)
+      sed -n '2,11p' "$0"; exit 0 ;;
+    *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
-  if [[ -f "$HOME/.zshrc"       ]]; then echo "$HOME/.zshrc";       return; fi
-  if [[ -f "$HOME/.bashrc"      ]]; then echo "$HOME/.bashrc";      return; fi
-  if [[ -f "$HOME/.bash_profile" ]]; then echo "$HOME/.bash_profile"; return; fi
-  if [[ "$(uname -s)" == "Darwin" ]]; then echo "$HOME/.zshrc"; else echo "$HOME/.bashrc"; fi
+done
+
+log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# --- 1. Preflight --------------------------------------------------------
+log "Checking prerequisites"
+command -v node >/dev/null    || die "node not found. Install Node.js 18+ first."
+command -v npm  >/dev/null    || die "npm not found."
+command -v curl >/dev/null    || die "curl not found."
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+[[ "$NODE_MAJOR" -ge 18 ]] || die "node $NODE_MAJOR detected; need 18 or newer."
+
+# --- 2. Copy agent files -------------------------------------------------
+log "Installing agents into $AGENTS_DST"
+mkdir -p "$AGENTS_DST"
+
+backup_if_exists() {
+  local f="$1"
+  [[ -e "$f" ]] || return 0
+  local bak="${f}.bak.$(date +%Y%m%d%H%M%S)"
+  mv "$f" "$bak"
+  warn "existing $f moved to $bak"
 }
 
-# Cached rc path — set on first use.
-SHELL_RC=""
+for rel in meal-checker.md meal-checker tg-notify.md tg-notify; do
+  src="$AGENTS_SRC/$rel"
+  dst="$AGENTS_DST/$rel"
+  [[ -e "$src" ]] || die "bundle missing $src"
+  backup_if_exists "$dst"
+  cp -R "$src" "$dst"
+done
+chmod +x "$AGENTS_DST/tg-notify/send.sh"
 
-ensure_rc_block() {
-  [[ -n "$SHELL_RC" ]] || SHELL_RC="$(pick_shell_rc)"
-  touch "$SHELL_RC"
-  if ! grep -qF "$MARKER_BEGIN" "$SHELL_RC"; then
-    {
-      printf '\n%s\n' "$MARKER_BEGIN"
-      printf '%s\n'   "$MARKER_END"
-    } >>"$SHELL_RC"
-    echo "✓ Added claude-tools env block to $SHELL_RC"
-  fi
-}
+# --- 3. meal-checker deps ------------------------------------------------
+log "Installing meal-checker dependencies (playwright)"
+(
+  cd "$AGENTS_DST/meal-checker"
+  npm install --silent --no-audit --no-fund
+  log "Downloading chromium for playwright (this can take a minute)"
+  npx --yes playwright install chromium
+)
 
-# Set or replace `export KEY='VALUE'` inside the managed block of the
-# shell rc. Value is single-quoted; embedded single quotes are escaped
-# the shell-safe way.
-set_env_var() {
-  local key="$1" value="$2"
-  ensure_rc_block
-  local escaped=${value//\'/\'\\\'\'}
-  local line="export ${key}='${escaped}'"
-  local tmp
-  tmp="$(mktemp)"
-  # Pass `line` via the environment — `awk -v` would interpret backslash
-  # escapes in the value and mangle the shell-safe single-quote escape.
-  LINE="$line" awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" \
-      -v key="$key" '
-    BEGIN { in_block=0; replaced=0; line=ENVIRON["LINE"] }
-    {
-      if ($0 == begin) { in_block=1; print; next }
-      if ($0 == end) {
-        if (in_block && !replaced) { print line }
-        in_block=0; print; next
-      }
-      if (in_block && $0 ~ "^export " key "=") {
-        if (!replaced) { print line; replaced=1 }
-        next
-      }
-      print
-    }
-  ' "$SHELL_RC" >"$tmp"
-  mv "$tmp" "$SHELL_RC"
-}
+# --- 4. env file ---------------------------------------------------------
+mkdir -p "$ENV_DIR"
+chmod 700 "$ENV_DIR"
 
-prompt_if_missing() {
-  # prompt_if_missing VAR_NAME "Prompt text: "
-  local var_name="$1" prompt_text="$2"
-  local current="${!var_name:-}"
-  if [[ -z "$current" ]]; then
-    read -r -p "$prompt_text" current
-  fi
-  printf '%s' "$current"
-}
+if [[ -f "$ENV_FILE" ]]; then
+  log "Existing env file detected: $ENV_FILE — leaving it untouched"
+else
+  cp "$HERE/env.example" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  log "Wrote template env file: $ENV_FILE"
 
-install_tg_notify() {
-  hr
-  echo "==> Installing tg-notify"
+  if [[ $NO_PROMPT -eq 0 ]]; then
+    echo
+    read -r -p "Meal-checker login email (leave blank to edit later): " email
+    read -r -p "Telegram bot token (leave blank to edit later): "        token
+    read -r -p "Telegram chat id   (leave blank to edit later): "        chat
 
-  local BIN_DIR="${TG_NOTIFY_BIN_DIR:-$HOME/.local/bin}"
-
-  mkdir -p "$BIN_DIR"
-  install -m 0755 "$SCRIPT_DIR/tg-notify/tg-notify" "$BIN_DIR/tg-notify"
-  echo "✓ Installed tg-notify to $BIN_DIR"
-
-  local TOKEN CHAT
-  TOKEN="$(prompt_if_missing TG_BOT_TOKEN "Telegram Bot Token: ")"
-  CHAT="$(prompt_if_missing  TG_CHAT_ID   "Telegram Chat ID:   ")"
-
-  if [[ -z "$TOKEN" || -z "$CHAT" ]]; then
-    echo "✗ TG_BOT_TOKEN / TG_CHAT_ID are required" >&2
-    return 1
-  fi
-
-  set_env_var TG_BOT_TOKEN "$TOKEN"
-  set_env_var TG_CHAT_ID   "$CHAT"
-  echo "✓ Wrote TG_BOT_TOKEN / TG_CHAT_ID to $SHELL_RC"
-
-  case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *)
-      echo
-      echo "⚠️  $BIN_DIR is not on your PATH. Add to your shell rc:"
-      echo "        export PATH=\"\$HOME/.local/bin:\$PATH\""
-      ;;
-  esac
-
-  echo
-  read -r -p "Send a tg-notify test message now? [Y/n] " ans
-  ans="${ans:-Y}"
-  if [[ "$ans" =~ ^[Yy]$ ]]; then
-    # Export inline so the test works in this shell even before rc is re-sourced.
-    if TG_BOT_TOKEN="$TOKEN" TG_CHAT_ID="$CHAT" \
-         "$BIN_DIR/tg-notify" "✅ tg-notify installed on $(hostname)"; then
-      echo "✓ Test message sent — check Telegram"
-    else
-      echo "✗ Test failed — verify your token / chat id in $SHELL_RC" >&2
-      return 1
-    fi
-  fi
-}
-
-install_meal_checker() {
-  hr
-  echo "==> Installing meal-checker agent"
-
-  if ! command -v node >/dev/null 2>&1; then
-    echo "✗ Node.js is required but not found on PATH." >&2
-    echo "  Install Node first: https://nodejs.org/ (or via mise/nvm/brew)" >&2
-    return 1
-  fi
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "✗ npm is required but not found on PATH." >&2
-    return 1
-  fi
-  echo "✓ Node $(node --version) / npm $(npm --version)"
-
-  local EMAIL
-  EMAIL="$(prompt_if_missing MEAL_CHECKER_EMAIL "Meal platform login email (e.g. you@mail.com): ")"
-  if [[ -z "$EMAIL" ]]; then
-    echo "✗ MEAL_CHECKER_EMAIL is required" >&2
-    return 1
-  fi
-  set_env_var MEAL_CHECKER_EMAIL "$EMAIL"
-  echo "✓ Wrote MEAL_CHECKER_EMAIL to $SHELL_RC"
-
-  local AGENTS_DIR="$HOME/.claude/agents"
-  local AGENT_DIR="$AGENTS_DIR/meal-checker"
-  local AGENT_DEF="$AGENTS_DIR/meal-checker.md"
-  local SRC="$SCRIPT_DIR/meal-checker"
-
-  mkdir -p "$AGENTS_DIR" "$AGENT_DIR"
-
-  if [[ -f "$AGENT_DEF" ]]; then
-    read -r -p "⚠️  $AGENT_DEF already exists. Overwrite? [y/N] " ans
-    if [[ "$ans" =~ ^[Yy]$ ]]; then
-      install -m 0644 "$SRC/meal-checker.md" "$AGENT_DEF"
-      echo "✓ Overwrote $AGENT_DEF"
-    else
-      echo "  Keeping existing definition."
-    fi
+    # sed in-place — BSD (macOS) and GNU both accept -i with an empty suffix when given two args
+    python3 - "$ENV_FILE" "$email" "$token" "$chat" <<'PY'
+import pathlib, sys, re
+path, email, token, chat = sys.argv[1], *sys.argv[2:5]
+p = pathlib.Path(path)
+content = p.read_text()
+def sub(key, val):
+    global content
+    if not val: return
+    content = re.sub(
+        rf"^export {key}=.*$",
+        f"export {key}='{val}'",
+        content,
+        flags=re.MULTILINE,
+    )
+sub("MEAL_CHECKER_EMAIL", email)
+sub("TG_BOT_TOKEN", token)
+sub("TG_CHAT_ID", chat)
+p.write_text(content)
+PY
+    log "env file populated. Edit $ENV_FILE anytime to update."
   else
-    install -m 0644 "$SRC/meal-checker.md" "$AGENT_DEF"
-    echo "✓ Wrote $AGENT_DEF"
+    warn "Edit $ENV_FILE to fill in MEAL_CHECKER_EMAIL / TG_BOT_TOKEN / TG_CHAT_ID"
   fi
+fi
 
-  install -m 0644 "$SRC/check.js"     "$AGENT_DIR/check.js"
-  install -m 0644 "$SRC/package.json" "$AGENT_DIR/package.json"
-  echo "✓ Copied check.js + package.json to $AGENT_DIR"
-
-  echo
-  echo "==> npm install (playwright) in $AGENT_DIR"
-  (cd "$AGENT_DIR" && npm install --omit=dev --no-audit --no-fund)
-  echo "✓ npm install complete"
-
-  echo
-  echo "==> Downloading chromium (~150 MB, first run only)"
-  (cd "$AGENT_DIR" && npx --yes playwright install chromium)
-  echo "✓ chromium ready"
-
-  echo
-  read -r -p "Run a meal-checker smoke test now? [y/N] " ans
-  if [[ "$ans" =~ ^[Yy]$ ]]; then
-    if MEAL_CHECKER_EMAIL="$EMAIL" node "$AGENT_DIR/check.js"; then
-      echo
-      echo "✓ Smoke test passed"
-    else
-      echo
-      echo "✗ Smoke test failed — see error above" >&2
-      return 1
-    fi
+# --- 5. Shell rc hint ----------------------------------------------------
+RC_LINE='[ -f ~/.config/claude-tools/env ] && . ~/.config/claude-tools/env'
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+  [[ -f "$rc" ]] || continue
+  if ! grep -Fq "$RC_LINE" "$rc"; then
+    echo "" >> "$rc"
+    echo "# claude-agents: load shared env" >> "$rc"
+    echo "$RC_LINE" >> "$rc"
+    log "Added env-sourcing line to $rc"
   fi
-}
+done
 
-if [[ "$TARGET" == "tg-notify"    || "$TARGET" == "both" ]]; then install_tg_notify;    fi
-if [[ "$TARGET" == "meal-checker" || "$TARGET" == "both" ]]; then install_meal_checker; fi
+# --- 6. Smoke test -------------------------------------------------------
+log "Installation complete."
+cat <<EOF
 
-hr
-echo "Done."
-echo
-if [[ "$TARGET" == "tg-notify" || "$TARGET" == "both" ]]; then
-  echo "  tg-notify:    tg-notify \"訊息內容\""
-fi
-if [[ "$TARGET" == "meal-checker" || "$TARGET" == "both" ]]; then
-  echo "  meal-checker: ask Claude Code \"今天訂午餐了嗎?\""
-fi
-echo
-echo "Env written to: ${SHELL_RC:-<shell rc>}"
-echo "Open a new terminal (or 'source' your shell rc) to pick up the new variables."
+Next steps:
+  1. Open a new shell (or run: source $ENV_FILE)
+  2. Verify tg-notify:
+       echo "install smoke test" | ~/.claude/agents/tg-notify/send.sh
+  3. Verify meal-checker:
+       node ~/.claude/agents/meal-checker/check.js
+
+Both agents are now callable from Claude Code.
+EOF

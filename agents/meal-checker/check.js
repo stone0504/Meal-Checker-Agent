@@ -91,7 +91,7 @@ async function extractOrders(page, source) {
 
   try {
     await page.goto(ENTRY_URL, { waitUntil: 'networkidle' });
-    await page.fill('input[placeholder*="mail.com"]', EMAIL);
+    await page.fill('input[placeholder*="amazon.com"]', EMAIL);
     await page.click('button:has-text("Login")');
     await page.waitForURL('**/booking', { timeout: 15000 });
 
