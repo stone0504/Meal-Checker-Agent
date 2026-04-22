@@ -2,10 +2,17 @@
 # install.sh — install meal-checker and tg-notify agents into ~/.claude/agents.
 #
 # Usage:
-#   ./install.sh              # interactive
-#   ./install.sh --no-prompt  # skip prompts, only copy files (you edit env by hand)
+#   ./install.sh              # interactive: prompts for email / bot token / chat id
+#   ./install.sh --no-prompt  # non-interactive: only copy files, edit env by hand
 #
-# Safe to re-run: existing files are backed up to *.bak before overwrite.
+# At the prompts, press Enter to skip any value — the env file stays valid and
+# you can fill it in later by editing ~/.config/claude-tools/env.
+#
+# The env file is sourced from ~/.zshrc / ~/.bashrc so new terminals pick the
+# variables up permanently.
+#
+# Safe to re-run: existing agent files are backed up to *.bak.<timestamp>, and
+# existing env values become defaults at the prompts.
 
 set -euo pipefail
 
@@ -20,7 +27,7 @@ for arg in "$@"; do
   case "$arg" in
     --no-prompt) NO_PROMPT=1 ;;
     -h|--help)
-      sed -n '2,11p' "$0"; exit 0 ;;
+      sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -71,43 +78,93 @@ log "Installing meal-checker dependencies (playwright)"
 mkdir -p "$ENV_DIR"
 chmod 700 "$ENV_DIR"
 
+# Shell-escape a value so it survives inside single quotes in the env file.
+# Any embedded single quote becomes '\'' (close, escaped quote, reopen).
+sq_escape() {
+  local s="$1"
+  printf "%s" "${s//\'/\'\\\'\'}"
+}
+
+# Read existing values (if any) so we can offer them as defaults on re-run.
+existing_email=""
+existing_token=""
+existing_chat=""
 if [[ -f "$ENV_FILE" ]]; then
-  log "Existing env file detected: $ENV_FILE — leaving it untouched"
+  # shellcheck disable=SC1090
+  ( set +u; source "$ENV_FILE"; printf '%s\n%s\n%s\n' \
+      "${MEAL_CHECKER_EMAIL:-}" "${TG_BOT_TOKEN:-}" "${TG_CHAT_ID:-}" ) \
+      > /tmp/claude-tools-env.$$ 2>/dev/null || true
+  { read -r existing_email; read -r existing_token; read -r existing_chat; } \
+      < /tmp/claude-tools-env.$$ || true
+  rm -f /tmp/claude-tools-env.$$
+fi
+
+email="$existing_email"
+token="$existing_token"
+chat="$existing_chat"
+
+if [[ $NO_PROMPT -eq 0 ]]; then
+  echo
+  log "Setup shared env vars (press Enter to skip any value — you can edit $ENV_FILE later)"
+
+  prompt_val() {
+    # prompt_val "label" current_value → echoes new value (may be empty)
+    local label="$1" current="$2" reply=""
+    if [[ -n "$current" ]]; then
+      read -r -p "$label [$current]: " reply
+      printf '%s' "${reply:-$current}"
+    else
+      read -r -p "$label (blank to skip): " reply
+      printf '%s' "$reply"
+    fi
+  }
+
+  email="$(prompt_val "Meal-checker login email"   "$existing_email")"
+  token="$(prompt_val "Telegram bot token"         "$existing_token")"
+  chat="$(prompt_val  "Telegram chat id"           "$existing_chat")"
 else
-  cp "$HERE/env.example" "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-  log "Wrote template env file: $ENV_FILE"
+  log "--no-prompt given; keeping existing env values if any"
+fi
 
-  if [[ $NO_PROMPT -eq 0 ]]; then
-    echo
-    read -r -p "Meal-checker login email (leave blank to edit later): " email
-    read -r -p "Telegram bot token (leave blank to edit later): "        token
-    read -r -p "Telegram chat id   (leave blank to edit later): "        chat
-
-    # sed in-place — BSD (macOS) and GNU both accept -i with an empty suffix when given two args
-    python3 - "$ENV_FILE" "$email" "$token" "$chat" <<'PY'
-import pathlib, sys, re
-path, email, token, chat = sys.argv[1], *sys.argv[2:5]
-p = pathlib.Path(path)
-content = p.read_text()
-def sub(key, val):
-    global content
-    if not val: return
-    content = re.sub(
-        rf"^export {key}=.*$",
-        f"export {key}='{val}'",
-        content,
-        flags=re.MULTILINE,
-    )
-sub("MEAL_CHECKER_EMAIL", email)
-sub("TG_BOT_TOKEN", token)
-sub("TG_CHAT_ID", chat)
-p.write_text(content)
-PY
-    log "env file populated. Edit $ENV_FILE anytime to update."
+# Write (or rewrite) the env file from the collected values. Missing values
+# stay commented-out placeholders so the file is still valid to source.
+{
+  echo "# Claude agents shared env file. Sourced by both meal-checker and tg-notify."
+  echo "# Location: $ENV_FILE"
+  echo "# Edit anytime; new terminals pick up changes automatically via your shell rc."
+  echo
+  echo "# Amazon employee meal ordering login email (meal-checker)"
+  if [[ -n "$email" ]]; then
+    echo "export MEAL_CHECKER_EMAIL='$(sq_escape "$email")'"
   else
-    warn "Edit $ENV_FILE to fill in MEAL_CHECKER_EMAIL / TG_BOT_TOKEN / TG_CHAT_ID"
+    echo "# export MEAL_CHECKER_EMAIL='you@amazon.com'"
   fi
+  echo
+  echo "# Telegram bot credentials (tg-notify)"
+  echo "# Create a bot via @BotFather, send it /start, then look up your chat id"
+  echo "# by sending any message and visiting"
+  echo "#   https://api.telegram.org/bot<TOKEN>/getUpdates"
+  if [[ -n "$token" ]]; then
+    echo "export TG_BOT_TOKEN='$(sq_escape "$token")'"
+  else
+    echo "# export TG_BOT_TOKEN='123456:ABCDEF-your-bot-token'"
+  fi
+  if [[ -n "$chat" ]]; then
+    echo "export TG_CHAT_ID='$(sq_escape "$chat")'"
+  else
+    echo "# export TG_CHAT_ID='123456789'"
+  fi
+} > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+filled=0; skipped=()
+[[ -n "$email" ]] && filled=$((filled+1)) || skipped+=("MEAL_CHECKER_EMAIL")
+[[ -n "$token" ]] && filled=$((filled+1)) || skipped+=("TG_BOT_TOKEN")
+[[ -n "$chat"  ]] && filled=$((filled+1)) || skipped+=("TG_CHAT_ID")
+
+log "Wrote env file: $ENV_FILE (${filled}/3 values set)"
+if (( ${#skipped[@]} > 0 )); then
+  warn "Skipped: ${skipped[*]} — edit $ENV_FILE and uncomment the matching line when ready"
 fi
 
 # --- 5. Shell rc hint ----------------------------------------------------
