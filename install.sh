@@ -11,7 +11,7 @@
 # The env file is sourced from ~/.zshrc / ~/.bashrc so new terminals pick the
 # variables up permanently.
 #
-# Safe to re-run: existing agent files are backed up to *.bak.<timestamp>, and
+# Safe to re-run: existing agent files are overwritten in place, and
 # existing env values become defaults at the prompts.
 
 set -euo pipefail
@@ -48,19 +48,11 @@ NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 log "Installing agents into $AGENTS_DST"
 mkdir -p "$AGENTS_DST"
 
-backup_if_exists() {
-  local f="$1"
-  [[ -e "$f" ]] || return 0
-  local bak="${f}.bak.$(date +%Y%m%d%H%M%S)"
-  mv "$f" "$bak"
-  warn "existing $f moved to $bak"
-}
-
 for rel in meal-checker.md meal-checker tg-notify.md tg-notify; do
   src="$AGENTS_SRC/$rel"
   dst="$AGENTS_DST/$rel"
   [[ -e "$src" ]] || die "bundle missing $src"
-  backup_if_exists "$dst"
+  rm -rf "$dst"
   cp -R "$src" "$dst"
 done
 chmod +x "$AGENTS_DST/tg-notify/send.sh"
