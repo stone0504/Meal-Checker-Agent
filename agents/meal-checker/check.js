@@ -28,33 +28,31 @@ function todayISO() {
 }
 
 async function extractOrders(page, source) {
-  // Wait until the active tab panel's Lunch section has fully rendered its cards.
-  // The Lunch divider is followed by an <span class="ant-tag"> with the order count —
-  // we treat the panel as ready when the number of visible cards following that divider
-  // matches the advertised count (or the count is 0).
+  // Wait until the active tab panel's Lunch and Dinner sections have fully rendered.
   await page.waitForFunction(
     () => {
-      const lunchStrongs = Array.from(document.querySelectorAll('strong')).filter(
-        (el) => el.textContent.trim() === 'Lunch',
-      );
-      const visibleLunch = lunchStrongs.find((el) => {
-        const divider = el.closest('.ant-divider');
-        return divider && divider.offsetParent !== null;
-      });
-      if (!visibleLunch) return false;
-      const divider = visibleLunch.closest('.ant-divider');
-      const countTag = divider.querySelector('.ant-tag');
-      const expected = countTag ? parseInt(countTag.textContent.trim(), 10) : 0;
-      if (!Number.isFinite(expected) || expected === 0) return true;
-      let fullyRendered = 0;
-      for (let sib = divider.nextElementSibling; sib; sib = sib.nextElementSibling) {
-        if (sib.matches('.ant-divider')) break;
-        if (!sib.matches('.ant-card') || sib.offsetParent === null) continue;
-        // Each card must have its meal-detail block hydrated — the "•" bullet only
-        // appears once the inner shop/meal row has rendered.
-        if (/•/.test(sib.innerText || '')) fullyRendered++;
+      function sectionReady(label) {
+        const strongs = Array.from(document.querySelectorAll('strong')).filter(
+          (el) => el.textContent.trim() === label,
+        );
+        const visible = strongs.find((el) => {
+          const divider = el.closest('.ant-divider');
+          return divider && divider.offsetParent !== null;
+        });
+        if (!visible) return true; // section doesn't exist on this tab — skip
+        const divider = visible.closest('.ant-divider');
+        const countTag = divider.querySelector('.ant-tag');
+        const expected = countTag ? parseInt(countTag.textContent.trim(), 10) : 0;
+        if (!Number.isFinite(expected) || expected === 0) return true;
+        let fullyRendered = 0;
+        for (let sib = divider.nextElementSibling; sib; sib = sib.nextElementSibling) {
+          if (sib.matches('.ant-divider')) break;
+          if (!sib.matches('.ant-card') || sib.offsetParent === null) continue;
+          if (/•/.test(sib.innerText || '')) fullyRendered++;
+        }
+        return fullyRendered >= expected;
       }
-      return fullyRendered >= expected;
+      return sectionReady('Lunch') && sectionReady('Dinner');
     },
     { timeout: 10000 },
   );
@@ -76,7 +74,7 @@ async function extractOrders(page, source) {
         const t = sib.querySelector?.('strong')?.textContent?.trim();
         if (t === 'Lunch' || t === 'Dinner') { section = t; break; }
       }
-      if (section !== 'Lunch') continue;
+      if (section !== 'Lunch' && section !== 'Dinner') continue;
 
       const text = card.innerText || '';
       const dateMatch = dStrong.textContent
@@ -100,6 +98,7 @@ async function extractOrders(page, source) {
         status: statusMatch ? statusMatch[1] : '',
         shop,
         meal,
+        mealType: section,
         source: sourceLabel,
       });
     }
@@ -114,7 +113,7 @@ async function extractOrders(page, source) {
 
   try {
     await page.goto(ENTRY_URL, { waitUntil: 'networkidle' });
-    await page.fill('input[placeholder*="amazon.com"]', EMAIL);
+    await page.fill('input[type="text"]', EMAIL);
     await page.click('button:has-text("Login")');
     await page.waitForURL('**/booking', { timeout: 15000 });
 
@@ -133,12 +132,18 @@ async function extractOrders(page, source) {
       .filter((o) => o.status === 'Confirmed')
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    const todayOrder = confirmed.find((o) => o.date === today) || null;
+    const lunchOrders = confirmed.filter((o) => o.mealType === 'Lunch');
+    const dinnerOrders = confirmed.filter((o) => o.mealType === 'Dinner');
+
+    const todayLunch = lunchOrders.find((o) => o.date === today) || null;
+    const todayDinner = dinnerOrders.find((o) => o.date === today) || null;
 
     const output = {
       today,
-      todayOrder,
-      confirmed,
+      todayLunch,
+      todayDinner,
+      lunch: lunchOrders,
+      dinner: dinnerOrders,
     };
 
     console.log(JSON.stringify(output, null, 2));
