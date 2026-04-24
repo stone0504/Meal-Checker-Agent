@@ -2,7 +2,7 @@
 
 > ⚠️ **Warning**: Date/time logic (e.g. "today's order") relies on the local system timezone. Make sure your system is set to **Asia/Taipei (GMT+8)**, otherwise the tool may query the wrong date.
 
-Three personal Claude Code sub-agents plus one routing skill:
+Three personal sub-agents plus one routing skill, packaged for both **Claude Code** and **Kiro CLI**:
 
 - **meal-checker** (agent) — logs into the Amazon employee lunch ordering platform (read-only) and reports today's order plus upcoming confirmed orders.
 - **meal-order** (agent) — browses available meals on any date, places new orders, and cancels existing ones (writes to the platform). Shares Playwright with meal-checker.
@@ -12,11 +12,14 @@ Three personal Claude Code sub-agents plus one routing skill:
 ## Requirements
 
 - macOS or Linux
-- Claude Code already installed (this installs into `~/.claude/agents/`)
+- One of:
+  - Claude Code — installs into `~/.claude/agents/` and `~/.claude/skills/`
+  - Kiro CLI — installs into `~/.kiro/agents/` and `~/.kiro/skills/`
 - Node.js 18 or newer
 - `curl`
+- `python3` (only required for the Kiro installer, which converts `.md` agents to Kiro JSON)
 
-## Install
+## Install (Claude Code)
 
 ```bash
 tar -xzf claude-agents-bundle.tar.gz
@@ -41,6 +44,23 @@ If you prefer to fill in secrets manually, pass `--no-prompt`:
 # then edit ~/.config/claude-tools/env
 ```
 
+## Install (Kiro CLI)
+
+```bash
+./install_for_kiro.sh
+```
+
+Kiro CLI stores agents as JSON (not Markdown + frontmatter), so this installer:
+
+1. Converts each `agents/<name>.md` into `~/.kiro/agents/<name>.json`, mapping Claude tool names (`Bash`, `Read`, …) to Kiro equivalents (`shell`, `read`, …) and rewriting `~/.claude/agents/` path references inside the prompt to `~/.kiro/agents/`
+2. Copies the supporting folders (`meal-checker/`, `meal-order/`, `tg-notify/`) into `~/.kiro/agents/`
+3. Installs Playwright + Chromium for meal-checker, and symlinks `meal-order/node_modules` so both agents share one copy
+4. Copies skills under `skills/` into `~/.kiro/skills/`
+5. Reuses the same `~/.config/claude-tools/env` file as the Claude Code install, and prompts for any missing values
+6. Runs `kiro-cli agent validate` on each installed agent if `kiro-cli` is on your `PATH`
+
+`--no-prompt` is supported here too. After install, try: `kiro-cli chat --agent meal-checker`.
+
 ## Configuration
 
 `~/.config/claude-tools/env` (permissions `600`):
@@ -55,6 +75,8 @@ To find your Telegram chat id: create a bot via [@BotFather](https://t.me/BotFat
 
 ## Smoke tests
 
+Replace `~/.claude` with `~/.kiro` if you installed the Kiro version.
+
 ```bash
 # tg-notify — you should receive the message on your phone
 echo "install smoke test" | ~/.claude/agents/tg-notify/send.sh
@@ -68,6 +90,8 @@ node ~/.claude/agents/meal-order/list-menu.js LUNCH
 
 ## Uninstall
 
+Claude Code:
+
 ```bash
 rm -rf ~/.claude/agents/meal-checker ~/.claude/agents/meal-checker.md
 rm -rf ~/.claude/agents/meal-order   ~/.claude/agents/meal-order.md
@@ -76,13 +100,24 @@ rm -rf ~/.claude/skills/meal
 rm -rf ~/.config/claude-tools        # removes the env file — back up first if needed
 ```
 
-Then remove the `claude-agents: load shared env` block from your shell rc.
+Kiro CLI:
+
+```bash
+rm -rf ~/.kiro/agents/meal-checker   ~/.kiro/agents/meal-checker.json
+rm -rf ~/.kiro/agents/meal-order     ~/.kiro/agents/meal-order.json
+rm -rf ~/.kiro/agents/tg-notify      ~/.kiro/agents/tg-notify.json
+rm -rf ~/.kiro/skills/meal
+# ~/.config/claude-tools is shared — only remove it if you're uninstalling both
+```
+
+Then remove the `claude-agents: load shared env` (or `claude/kiro agents: load shared env`) block from your shell rc.
 
 ## Layout
 
 ```
 claude-agents-bundle/
-├── install.sh
+├── install.sh              # Claude Code installer (~/.claude/)
+├── install_for_kiro.sh     # Kiro CLI installer (~/.kiro/)
 ├── README.md
 ├── env.example
 ├── agents/
