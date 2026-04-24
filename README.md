@@ -2,10 +2,12 @@
 
 > ⚠️ **Warning**: Date/time logic (e.g. "today's order") relies on the local system timezone. Make sure your system is set to **Asia/Taipei (GMT+8)**, otherwise the tool may query the wrong date.
 
-Two personal Claude Code sub-agents:
+Three personal Claude Code sub-agents plus one routing skill:
 
-- **meal-checker** — logs into the Amazon employee lunch ordering platform (read-only) and reports today's order plus upcoming confirmed orders.
-- **tg-notify** — sends a Telegram message to the user's personal chat via the Bot API.
+- **meal-checker** (agent) — logs into the Amazon employee lunch ordering platform (read-only) and reports today's order plus upcoming confirmed orders.
+- **meal-order** (agent) — browses available meals on any date, places new orders, and cancels existing ones (writes to the platform). Shares Playwright with meal-checker.
+- **tg-notify** (agent) — sends a Telegram message to the user's personal chat via the Bot API.
+- **meal** (skill) — thin router invoked via `/meal`. Delegates to `meal-checker` (read) or `meal-order` (list / order / cancel) based on intent.
 
 ## Requirements
 
@@ -24,12 +26,13 @@ cd claude-agents-bundle
 
 The installer will:
 
-1. Copy `meal-checker.md`, `tg-notify.md`, and their supporting folders into `~/.claude/agents/`
-2. Run `npm install` and `npx playwright install chromium` for meal-checker
-3. Create `~/.config/claude-tools/env` from the template and prompt for secrets
-4. Add a one-liner to `~/.zshrc` / `~/.bashrc` so the env file is sourced on new shells
+1. Copy `meal-checker.md`, `meal-order.md`, `tg-notify.md`, and their supporting folders into `~/.claude/agents/`
+2. Run `npm install` and `npx playwright install chromium` for meal-checker, then symlink `meal-order/node_modules` to share the same install
+3. Copy any skills under `skills/` (e.g. `meal/`) into `~/.claude/skills/`
+4. Create `~/.config/claude-tools/env` from the template and prompt for secrets
+5. Add a one-liner to `~/.zshrc` / `~/.bashrc` so the env file is sourced on new shells
 
-Existing files in `~/.claude/agents/` are backed up to `*.bak.<timestamp>` before being overwritten. Re-running the installer is safe.
+Re-running the installer is safe: existing agent/skill folders in `~/.claude/agents/` and `~/.claude/skills/` are removed and replaced in place, and existing env values become defaults at the prompts.
 
 If you prefer to fill in secrets manually, pass `--no-prompt`:
 
@@ -58,13 +61,18 @@ echo "install smoke test" | ~/.claude/agents/tg-notify/send.sh
 
 # meal-checker — prints JSON to stdout
 node ~/.claude/agents/meal-checker/check.js
+
+# meal-order — lists today's lunch menu as JSON (read-only smoke test)
+node ~/.claude/agents/meal-order/list-menu.js LUNCH
 ```
 
 ## Uninstall
 
 ```bash
 rm -rf ~/.claude/agents/meal-checker ~/.claude/agents/meal-checker.md
+rm -rf ~/.claude/agents/meal-order   ~/.claude/agents/meal-order.md
 rm -rf ~/.claude/agents/tg-notify    ~/.claude/agents/tg-notify.md
+rm -rf ~/.claude/skills/meal
 rm -rf ~/.config/claude-tools        # removes the env file — back up first if needed
 ```
 
@@ -77,15 +85,24 @@ claude-agents-bundle/
 ├── install.sh
 ├── README.md
 ├── env.example
-└── agents/
-    ├── meal-checker.md
-    ├── meal-checker/
-    │   ├── check.js
-    │   ├── package.json
-    │   └── package-lock.json
-    ├── tg-notify.md
-    └── tg-notify/
-        └── send.sh
+├── agents/
+│   ├── meal-checker.md
+│   ├── meal-checker/
+│   │   ├── check.js
+│   │   ├── package.json
+│   │   └── package-lock.json
+│   ├── meal-order.md
+│   ├── meal-order/
+│   │   ├── list-menu.js
+│   │   ├── order.js
+│   │   ├── cancel.js
+│   │   └── package.json
+│   ├── tg-notify.md
+│   └── tg-notify/
+│       └── send.sh
+└── skills/
+    └── meal/
+        └── SKILL.md
 ```
 
-`node_modules/` and the Playwright chromium cache are **not** shipped — the installer fetches them on each machine.
+`node_modules/` and the Playwright chromium cache are **not** shipped — the installer fetches them into `meal-checker/` and symlinks `meal-order/node_modules` to it so both agents share the same Playwright install.

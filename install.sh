@@ -19,6 +19,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SRC="$HERE/agents"
 AGENTS_DST="$HOME/.claude/agents"
+SKILLS_SRC="$HERE/skills"
+SKILLS_DST="$HOME/.claude/skills"
 ENV_DIR="$HOME/.config/claude-tools"
 ENV_FILE="$ENV_DIR/env"
 
@@ -48,7 +50,7 @@ NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 log "Installing agents into $AGENTS_DST"
 mkdir -p "$AGENTS_DST"
 
-for rel in meal-checker.md meal-checker tg-notify.md tg-notify; do
+for rel in meal-checker.md meal-checker meal-order.md meal-order tg-notify.md tg-notify; do
   src="$AGENTS_SRC/$rel"
   dst="$AGENTS_DST/$rel"
   [[ -e "$src" ]] || die "bundle missing $src"
@@ -57,7 +59,7 @@ for rel in meal-checker.md meal-checker tg-notify.md tg-notify; do
 done
 chmod +x "$AGENTS_DST/tg-notify/send.sh"
 
-# --- 3. meal-checker deps ------------------------------------------------
+# --- 3. meal-checker deps (shared with meal-order) ----------------------
 log "Installing meal-checker dependencies (playwright)"
 (
   cd "$AGENTS_DST/meal-checker"
@@ -65,6 +67,25 @@ log "Installing meal-checker dependencies (playwright)"
   log "Downloading chromium for playwright (this can take a minute)"
   npx --yes playwright install chromium
 )
+
+# meal-order shares the same Playwright install via a relative symlink to
+# avoid duplicating ~300MB of chromium.
+log "Linking meal-order node_modules -> meal-checker/node_modules"
+ln -sfn ../meal-checker/node_modules "$AGENTS_DST/meal-order/node_modules"
+
+# --- 3b. Install skills --------------------------------------------------
+if [[ -d "$SKILLS_SRC" ]]; then
+  log "Installing skills into $SKILLS_DST"
+  mkdir -p "$SKILLS_DST"
+  for skill_dir in "$SKILLS_SRC"/*/; do
+    [[ -d "$skill_dir" ]] || continue
+    name="$(basename "$skill_dir")"
+    dst="$SKILLS_DST/$name"
+    rm -rf "$dst"
+    cp -R "$skill_dir" "$dst"
+    log "  installed skill: $name"
+  done
+fi
 
 # --- 4. env file ---------------------------------------------------------
 mkdir -p "$ENV_DIR"
@@ -171,16 +192,4 @@ for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
   fi
 done
 
-# --- 6. Smoke test -------------------------------------------------------
 log "Installation complete."
-cat <<EOF
-
-Next steps:
-  1. Open a new shell (or run: source $ENV_FILE)
-  2. Verify tg-notify:
-       echo "install smoke test" | ~/.claude/agents/tg-notify/send.sh
-  3. Verify meal-checker:
-       node ~/.claude/agents/meal-checker/check.js
-
-Both agents are now callable from Claude Code.
-EOF

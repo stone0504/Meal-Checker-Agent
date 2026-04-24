@@ -1,0 +1,9 @@
+{
+  "name": "meal-order",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scraper + orderer for Amazon employee meal ordering platform",
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}
