@@ -34,11 +34,11 @@ The script reads the login email from the `MEAL_CHECKER_EMAIL` environment varia
   "todayLunch": null,
   "todayDinner": null,
   "lunch": [
-    { "date": "2026-04-23", "weekday": "Thu", "status": "Confirmed",
+    { "date": "2026-04-23", "weekday": "Thu", "orderId": "008", "status": "Confirmed",
       "shop": "鄉間小路", "meal": "招牌三寶飯", "mealType": "Lunch", "source": "Recent" }
   ],
   "dinner": [
-    { "date": "2026-04-24", "weekday": "Fri", "status": "Confirmed",
+    { "date": "2026-04-24", "weekday": "Fri", "orderId": "012", "status": "Confirmed",
       "shop": "貞心食堂", "meal": "紅燒牛腩便當", "mealType": "Dinner", "source": "Recent" }
   ]
 }
@@ -51,8 +51,8 @@ After running the script, parse the JSON output and reply in Traditional Chinese
 1. **今天的訂餐狀態** — show both lunch and dinner status:
    - 午餐：「✅ 有訂：<店家> - <餐點>」 or 「❌ 沒有訂餐紀錄」
    - 晚餐：「✅ 有訂：<店家> - <餐點>」 or 「❌ 沒有訂餐紀錄」
-2. **午餐 Markdown 表格** listing every confirmed lunch with columns: 日期 | 店家 | 餐點 | 來源 (Recent/Future), sorted ascending by date. If there are no lunch orders, show 「目前沒有已確認的午餐訂單」.
-3. **晚餐 Markdown 表格** listing every confirmed dinner with columns: 日期 | 店家 | 餐點 | 來源 (Recent/Future), sorted ascending by date. If there are no dinner orders, show 「目前沒有已確認的晚餐訂單」.
+2. **午餐 Markdown 表格** listing every confirmed lunch with columns: 日期 | 餐別 | 店家 | 餐點 | 訂餐編號, sorted ascending by date. 餐別 is always 「午餐」. If there are no lunch orders, show 「目前沒有已確認的午餐訂單」.
+3. **晚餐 Markdown 表格** listing every confirmed dinner with columns: 日期 | 餐別 | 店家 | 餐點 | 訂餐編號, sorted ascending by date. 餐別 is always 「晚餐」. If there are no dinner orders, show 「目前沒有已確認的晚餐訂單」.
 
 Always show both lunch and dinner sections. Keep the response tight — no extra commentary unless the user asked a specific follow-up.
 

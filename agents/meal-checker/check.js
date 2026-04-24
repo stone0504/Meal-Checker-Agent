@@ -82,6 +82,15 @@ async function extractOrders(page, source) {
         .match(/^(20\d{2}-\d{2}-\d{2})\s*\(([A-Za-z]{3})\)$/);
       const statusMatch = text.match(/\b(Confirmed|Cancelled|Pending)\b/);
 
+      // Order ID: a numeric <strong> inside the card (e.g. "020", "008").
+      // It sits right after the date strong in the card header row.
+      let orderId = '';
+      const strongs = Array.from(card.querySelectorAll('strong'));
+      for (const s of strongs) {
+        const t = s.textContent.trim();
+        if (/^\d{2,}$/.test(t)) { orderId = t; break; }
+      }
+
       let shop = '';
       const shopIcon = card.querySelector('[aria-label="shop"], img[alt="shop"]');
       if (shopIcon) {
@@ -95,6 +104,7 @@ async function extractOrders(page, source) {
       results.push({
         date: dateMatch[1],
         weekday: dateMatch[2],
+        orderId,
         status: statusMatch ? statusMatch[1] : '',
         shop,
         meal,
