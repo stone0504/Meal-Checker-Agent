@@ -128,17 +128,25 @@ async function extractOrders(page, source) {
     await page.waitForURL('**/booking', { timeout: 15000 });
 
     await page.goto(HISTORY_URL, { waitUntil: 'networkidle' });
-    await page.waitForSelector('[role="tab"]:has-text("Recent Orders")');
 
-    await page.click('[role="tab"]:has-text("Recent Orders")');
+    // Platform UI was updated: the single "Recent Orders" tab was split into
+    // three — "Today Orders", "Order History", "Future Orders" — so we now
+    // scrape each and merge the results.
+    await page.waitForSelector('[role="tab"]:has-text("Today Orders")');
+
+    await page.click('[role="tab"]:has-text("Today Orders")');
     await page.waitForTimeout(500);
-    const recent = await extractOrders(page, 'Recent');
+    const todayOrders = await extractOrders(page, 'Today');
+
+    await page.click('[role="tab"]:has-text("Order History")');
+    await page.waitForTimeout(500);
+    const historyOrders = await extractOrders(page, 'History');
 
     await page.click('[role="tab"]:has-text("Future Orders")');
     await page.waitForTimeout(500);
-    const future = await extractOrders(page, 'Future');
+    const futureOrders = await extractOrders(page, 'Future');
 
-    const confirmed = [...recent, ...future]
+    const confirmed = [...todayOrders, ...historyOrders, ...futureOrders]
       .filter((o) => o.status === 'Confirmed')
       .sort((a, b) => a.date.localeCompare(b.date));
 
