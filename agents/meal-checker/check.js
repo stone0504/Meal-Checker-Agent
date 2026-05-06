@@ -82,13 +82,19 @@ async function extractOrders(page, source) {
         .match(/^(20\d{2}-\d{2}-\d{2})\s*\(([A-Za-z]{3})\)$/);
       const statusMatch = text.match(/\b(Confirmed|Cancelled|Pending)\b/);
 
-      // Order ID: a numeric <strong> inside the card (e.g. "020", "008").
-      // It sits right after the date strong in the card header row.
+      // Pickup No.: the new UI renders the number inside a styled <div> next to
+      // a "Pickup\nNo." label, so it shows up in innerText as "Pickup\nNo.\n067".
+      // Fall back to the older layout (numeric <strong> in the card header row)
+      // for backwards compatibility.
       let orderId = '';
-      const strongs = Array.from(card.querySelectorAll('strong'));
-      for (const s of strongs) {
-        const t = s.textContent.trim();
-        if (/^\d{2,}$/.test(t)) { orderId = t; break; }
+      const pickupMatch = text.match(/Pickup\s*\n?\s*No\.?\s*\n?\s*(\d+)/i);
+      if (pickupMatch) orderId = pickupMatch[1];
+      if (!orderId) {
+        const strongs = Array.from(card.querySelectorAll('strong'));
+        for (const s of strongs) {
+          const t = s.textContent.trim();
+          if (/^\d{2,}$/.test(t)) { orderId = t; break; }
+        }
       }
 
       let shop = '';
